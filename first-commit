@@ -1,0 +1,139 @@
+# 1. Create a vpc
+resource "aws_vpc" "project2" {
+  cidr_block = "10.0.0.0/16"
+  tags = {
+  Name = "project2Vpc"
+}
+}
+
+# 2.Create an internet gateway
+resource "aws_internet_gateway" "proj2GW" {
+  vpc_id = aws_vpc.project2.id
+  tags = {
+    "Name" = "proj2GW"
+  }
+}
+
+# 3. Create custom route table
+resource "aws_route_table" "proj2RT" {
+  vpc_id = aws_vpc.project2.id
+  route  {
+    cidr_block = "0.0.0.0/0"
+    # the above cidr shows that all traffic is allowed
+        gateway_id = aws_internet_gateway.proj2GW.id
+  } 
+  route {
+    ipv6_cidr_block = "::/0"
+    gateway_id = aws_internet_gateway.proj2GW.id
+  }
+  tags = {
+    "Name" = "proj2RT"
+  }
+}
+
+# 4. Create subnet where our webserver is going to reside on_failure
+resource "aws_subnet" "proj2Sub" {
+  vpc_id = aws_vpc.project2.id
+  cidr_block = "10.0.1.0/24"
+  availability_zone = "eu-west-2a"
+
+  tags = {
+    "Name" = "proj2Sub"
+  }
+}
+
+# 5. Associating route table to subnet
+resource "aws_route_table_association" "proj2subAss" {
+    subnet_id = aws_subnet.proj2Sub.id
+    route_table_id = aws_route_table.proj2RT.id
+     
+}
+
+# 6. Create a security group
+resource "aws_security_group" "proj2SG" {
+   name        = "allow_web_traffic"
+   description = "Allow Web inbound traffic"
+    vpc_id = aws_vpc.project2.id
+ingress {
+     description = "HTTPS"
+     from_port   = 443
+     to_port     = 443
+     protocol    = "tcp"
+     cidr_blocks = ["0.0.0.0/0"]
+}
+ingress {
+     description = "HTTP"
+     from_port   = 80
+     to_port     = 80
+     protocol    = "tcp"
+     cidr_blocks = ["0.0.0.0/0"]
+   }
+   ingress {
+     description = "SSH"
+     from_port   = 22
+     to_port     = 22
+     protocol    = "tcp"
+     cidr_blocks = ["0.0.0.0/0"]
+   }
+   egress {
+     from_port   = 0
+     to_port     = 0
+     protocol    = "-1"
+     cidr_blocks = ["0.0.0.0/0"]
+   }
+
+   tags = {
+     Name = "proj2SG"
+   }
+ }
+
+ # 7. Create a network_interface
+
+ resource "aws_network_interface" "proj2netwk-int" {
+    subnet_id = aws_subnet.proj2Sub.id
+  private_ips     = ["10.0.1.50"]
+   security_groups = [aws_security_group.proj2SG.id]
+
+   tags = {
+     "Name" = "proj2netwk-int"
+   }
+}
+
+# 8. Create elastic_ip
+resource "aws_eip" "proj2Eip" {
+   vpc                       = true
+   network_interface         = aws_network_interface.proj2netwk-int.id
+   associate_with_private_ip = "10.0.1.50"
+   depends_on                = [aws_internet_gateway.proj2GW]
+
+   tags = {
+     "Name" = "proj2Eip"
+   }
+ }
+
+ # 9. Create aws_instance
+
+resource "aws_instance" "proj2-web-server" {
+   ami                    = "ami-04706e771f950937f"
+   instance_type          = "t2.micro"
+   availability_zone = "eu-west-2a"
+   key_name               = "project2-KP"
+depends_on                = [aws_eip.proj2Eip]
+   network_interface {
+     device_index         = 0
+     network_interface_id = aws_network_interface.proj2netwk-int.id
+   }
+
+   user_data = <<-EOF
+			#!/bin/bash
+			sudo su
+			yum update -y
+			yum install http -y
+			systemctl restart httpd
+			systemctl enable httpd
+			echo "Welcome to the proje2 Home Page" > /var/www/html/index.html
+			EOF
+   tags = {
+     Name = "web-server"
+   }
+ }
